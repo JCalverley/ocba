@@ -415,7 +415,74 @@ for i in range(0,k):
     print('4th', i)
 print(n_0_equals_2.mean())
      
-      
+            
+            
+def OCBA_test(k, mean, mean_initial, var, var_initial, n_0=5, tri_del=1, P=0.95):
+    # This is the general function which calculates the total number of simulations required to obtain the desired PRobability of correct selection (and hence the best design) using the OCBA method described on page 50 of the OCBA book
+    
+    current_completed = k * n_0
+    # This array will keep track of how many replication each design has done
+    no_sims = np.full(k, n_0)
+    # Given our n_0 and the inputs, it may be that the P(CS) is higher than our target without any further simulations
+    APCSB_current = APCS_B(k, no_sims, mean_initial, var_initial)
+    if APCSB_current > 0.95:
+        return k*n_0
+    else:
+        print('after', current_completed, 'initial sims APCS = ', APCSB_current)
+        APCSB_after_initial = APCSB_current
+    # Since APCS is a lower bound of P(CS) then we can be certain that once the APCS is achieved, then so is P(CS)
+    # Here we use a while loop, which stops when APCS reaches the desired level
+    APCS_graph = [APCSB_after_initial]
+    l=1
+    while APCSB_current < P:
+        # Generate the initial ratio following the first n_o replications    
+        props = initial_ratio(k, mean_initial, var_initial)
+        # Use the random number generator to find the allocation
+        allocation_sims = allocation(props, tri_del)
+        mean_new = np.zeros(k)
+        var_new = np.zeros(k)
+        # We only need to include the designs for which we have allocated replications in the calculation of new mean and variance
+        to_do = np.where(allocation_sims > 0)
+        for j in to_do[0]:
+            # For each design with at least one allocation, we generate that many new random numbers from the N(mean, var) dist
+            # The fn below was designed for specifying the 'Option' as we would generally
+            # However, since j is taking an index, we need to add 1 for the function to work as required
+            new_gen = rng_repeats_for_OCBA_2(j+1, mean, var, allocation_sims)
+            # Given these generated values, we now calculate the new mean and variance of design j 
+            # As said before, the mean is relatively simple
+            mean_new[j] = ((no_sims[j] * mean_initial[j]) + (allocation_sims[j] * new_gen[0])) / (no_sims[j] + allocation_sims[j])
+            # But for the variance we need to use the function as define earlier
+            var_new[j] = new_var(mean_initial, var_initial, new_gen[0], new_gen[1], no_sims[j], allocation_sims[j], j+1)
+            # We can then update the number of replications design j has done
+            no_sims[j] = no_sims[j] + allocation_sims[j]
+        # For those designs where we have not allocated any replications, the means and variances remain the same
+        to_not_do = np.where(allocation_sims == 0)
+        for m in to_not_do[0]:
+            mean_new[m] = mean_initial[m]
+            var_new[m] = var_initial[m]
+        # Having obtained mean_new and var_new which have been updated from mean_initial and var_initial, or not
+        # Then we set them back as before for the next tri delta
+        mean_initial = mean_new
+        var_initial = var_new
+        APCSB_current = APCS_B(k, no_sims, mean_initial, var_initial)
+        current_completed = current_completed + tri_del
+        APCS_graph.append(APCSB_current)
+        #print(APCSB_current)
+        current_completed = current_completed + tri_del
+        l=l+1
+        if current_completed > 10000:
+            break
+    x=np.linspace(k*n_0, current_completed, num=l)
+    print(plt.plot(x, APCS_graph, 'g-'))
+    #print('number of sims per design', no_sims)
+    final_mean = mean_initial
+    print('Final mean:', final_mean)
+    final_var = var_initial
+    print('Final var:', final_var)
+    #print('The Final Chosen design is: Option', choose_b_np(final_mean)[0] + 1)
+    #print('Obtained after', current_completed, 'simulations')
+    return current_completed
+
 
 
 

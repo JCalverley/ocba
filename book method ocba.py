@@ -153,10 +153,12 @@ def new_var(mean_initial, var_initial, mean_new, var_new, n, allocation, pos):
     return variance_new
 
 
-def prob_Jb_minus_Ji(N, J_est, var):
+def prob_Jb_minus_Ji(N, J_est, var, l):
     # This function is used in the calulation of APSC
     # It calculates P(J_tilda_b - J_tilda_i < 0) by calculating P(P_tilda_i - J_tilda_b > 0)
     est = J_est[1]-J_est[0]
+    if l < 20 or l > 9990:
+        print('J_i - J_b', est)
     sd = math.sqrt((var[0]/N[0])+(var[1]/N[1]))
     # Here we standardise the parameters
     z = est / sd
@@ -165,10 +167,13 @@ def prob_Jb_minus_Ji(N, J_est, var):
     return prob
 
 
-def APCS_B(k, N, J_est, var):
+def APCS_B(k, N, J_est, var, l):
     # This function calculates the Approximate value of Correct Selection (using Bonferroni inequality) using the formula on page 37 of OCBA book
     b = choose_b_np(J_est)[0]
-    probs = np.zeros(k)
+    if l < 20 or l > 9990:
+        print('b', b)
+    probs = np.zeros(k-1)
+    j = 0
     for i in range(0,k):
         if i == b:
             continue
@@ -180,8 +185,14 @@ def APCS_B(k, N, J_est, var):
         # The variance of design i
         var_prob = [var[b], var[i]]
         # Each also contains the corresponding parameter for design b, which does not change for each i
-        probs[i] = 1 - prob_Jb_minus_Ji(N_prob, J_est_prob, var_prob)
-    APCSB = round(1 - np.sum(probs),4)
+        if l < 20 or l > 9990:
+            print(i)
+        probs[j] = prob_Jb_minus_Ji(N_prob, J_est_prob, var_prob, l)  
+        j = j + 1
+    APCSB = round(2 - k + np.sum(probs),4)
+    if l < 20 or l > 9990:
+        print('Initial Probs', probs)  
+        print('P(CS)', APCSB)
     return APCSB
 
 
@@ -269,15 +280,17 @@ def OCBA_method_target_PCS_book(k, mean, var, n_0=5, tri_del=1, P=0.95):
         gen = rng_repeats_for_OCBA(i, mean, var, n_0)
         mean_initial[i-1] = gen[0]
         var_initial[i-1] = gen[1]
-    #print('After', n_0, 'simulations, the estimated mean is:', mean_initial)
-    #print('and the estimated variance is:',var_initial)
+    stored_mean = mean_initial
+    stored_var = var_initial
+    print('After', n_0, 'simulations, the estimated mean is:', mean_initial)
+    print('and the estimated variance is:',var_initial)
     # We have conducted n_0 simulations for each design so the current completed is k times n_0
     # This parameter will be the returned value
     current_completed = k * n_0
     # This array will keep track of how many replication each design has done
     no_sims = np.full(k, n_0)
     # Given our n_0 and the inputs, it may be that the P(CS) is higher than our target without any further simulations
-    APCSB_current = APCS_B(k, no_sims, mean_initial, var_initial)
+    APCSB_current = APCS_B(k, no_sims, mean_initial, var_initial, 0)
     if APCSB_current > 0.95:
         #print('after initial sims APCS = ', APCSB_current)
         return k*n_0
@@ -291,6 +304,9 @@ def OCBA_method_target_PCS_book(k, mean, var, n_0=5, tri_del=1, P=0.95):
     # Here we use a while loop, which stops when APCS reaches the desired level
     APCS_graph = [APCSB_after_initial]
     l=1
+    c = 0
+    stochastic_basic = np.full((k, k), 0)
+    old_chosen = 0
     while APCSB_current < P:
         # Generate the initial ratio following the first n_o replications 
         props = initial_ratio(k, mean_initial, var_initial)
@@ -305,9 +321,9 @@ def OCBA_method_target_PCS_book(k, mean, var, n_0=5, tri_del=1, P=0.95):
         else:
             # When tri_del is more than one, we use the function written earlier to allocate these tri_del replications
             allocation_sims = book_allocation(k, props, tri_del)
+        if l > 2:
+            stochastic_basic[old_chosen,starving_design] = stochastic_basic[old_chosen,starving_design] + 1
         # From this point on, the function is the same
-        if current_completed % 500:
-            print('allocation:', l, props)
         mean_new = np.zeros(k)
         var_new = np.zeros(k)
         # We only need to include the designs for which we have allocated replications in the calculation of new mean and variance
@@ -335,84 +351,44 @@ def OCBA_method_target_PCS_book(k, mean, var, n_0=5, tri_del=1, P=0.95):
         # Then we set them back as before for the next tri delta
         mean_initial = mean_new
         var_initial = var_new
-        APCSB_current = APCS_B(k, no_sims, mean_initial, var_initial)
+        APCSB_current = APCS_B(k, no_sims, mean_initial, var_initial, l)
         APCS_graph.append(APCSB_current)
         #print(APCSB_current)
         current_completed = current_completed + tri_del
+        if l < 20 or l > 9990:
+            print(l, 'Proportions', props)
+            print(l, 'Allocation', allocation_sims)
+        old_chosen = starving_design
         l=l+1
         if current_completed > 10000:
-            x=np.linspace(k*n_0, current_completed, num=l)
-            print(plt.plot(x, APCS_graph, 'r-'))
-            print('number of sims per design', no_sims)
-            return round(APCSB_current, 4), b+1
+            c = 1
+            break
     x=np.linspace(k*n_0, current_completed, num=l)
-    print(plt.plot(x, APCS_graph, 'g-'))
+    if c == 0:
+        print(plt.plot(x, APCS_graph, 'g-'))
+    else:
+        print(plt.plot(x, APCS_graph, 'r-'))
+    print(stochastic_basic)
+    stochastic = np.full((k,k), 0, dtype=float)
+    for o in range(0,k):
+        for n in range(0,k):
+            if no_sims[o] == 5:
+                stochastic[o, n] = 0
+            else:
+                stochastic[o, n] = round(stochastic_basic[o, n] / (no_sims[o]-5), 4)
     print('number of sims per design', no_sims)
+    print(stochastic)
     final_mean = mean_initial
     print('Final mean:', final_mean)
     final_var = var_initial
     print('Final var:', final_var)
-    print('The Final Chosen design is: Option', choose_b_np(final_mean)[0] + 1)
+    print('The Final Chosen design is: Option', b + 1)
     #print('Obtained after', current_completed, 'simulations')
+    print('P(CS)', APCSB_current)
     return current_completed
 
+example_mean = np.arange(1,6)
+example_var = np.full(5, 100)
 
-OCBA_method_target_PCS_book(7, example_mean, example_var, tri_del=3)
-
-
-
-example_mean = [1,2,3,4,5]
-example_var = [1,1,1,1,1]
-
-
-
-
-
-
-example_mean = np.arange(1,8)
-example_var = np.full(7, 15)
-
-
-np.linspace(0, 5, 5)
-k = 100
-
-n_0_equals_5 = np.zeros(k)
-for i in range(0,k):
-    n_0_equals_5[i] = OCBA_method_target_PCS_book(10, example_mean, example_var)
-    print('1st', i)
-
-
-n_0_equals_4 = np.zeros(k)
-for i in range(0,k):
-    n_0_equals_4[i] = OCBA_method_target_PCS_book(10, example_mean, example_var, n_0=4)
-    print('2nd', i)
-
-
-n_0_equals_3 = np.zeros(k)
-for i in range(0,k):
-    n_0_equals_3[i] = OCBA_method_target_PCS_book(10, example_mean, example_var, n_0=3)
-    print('3rd', i)
-
-
-n_0_equals_2 = np.zeros(k)
-for i in range(0,k):
-    n_0_equals_2[i] = OCBA_method_target_PCS_book(10, example_mean, example_var, n_0=2)
-    print('4th', i)
-    
-print(n_0_equals_5.mean())
-print(n_0_equals_4.mean())
-print(n_0_equals_3.mean())
-print(n_0_equals_2.mean())
-
-
-
-def pppp(k):
-    pppp = np.zeros(k)
-    for i in range(0,k):
-        pppp[i] = 1
-    return 
-
-%timeit pppp(10000000)
-
-
+OCBA_method_target_PCS_book(5, example_mean, example_var, tri_del=1)
 
